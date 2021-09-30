@@ -10,79 +10,87 @@ import time
 from bs4 import BeautifulSoup
 import pandas as pd
 import json
-from decouple import config
-
-
-
-
-from selenium import webdriver
-driver = webdriver.Chrome(executable_path=config(CHROME_DRIVER_EXECUTABLE_PATH))
-from selenium.webdriver.common.action_chains import ActionChains
-
 import logging
+# from decouple import config
+from selenium import webdriver
+from selenium.webdriver.common.action_chains import ActionChains
+from agent_rotation import *
+
+from constants import *
+
+# test, helper function
+def get_list_cat_elements(cat_elements):
+    list_cat_elements = []
+    for cat_element in cat_elements:
+        list_cat_elements.append(cat_element)
+    return list_cat_elements
 
 
-user_agent_list = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/11.1.2 Safari/605.1.15',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/44.0.2403.157 Safari/537.36',
-    ]
 
+def daraz_category_urls(proxies, baseurl):
 
-def daraz_category_urls(baseurl, user_agent):
+    driver = get_driver(proxies)
 
-    driver.execute_cdp_cmd('Network.setUserAgentOverride', {"userAgent": user_agent})
-
+    # driver = webdriver.Chrome(executable_path=CHROME_DRIVER_PATH)
+    # exception handling (timeout)
     driver.get(baseurl)
-    
-    time.sleep(3)
-    
     soup = BeautifulSoup(driver.page_source, 'html.parser')
     
-    url_list = []
-    # extract category urls from soup
+    time.sleep(5)
     
-    cat_elements = soup.find_all("li", {"class":"lzd-site-menu-root-item"})
+    timeout = DARAZ_DRIVER_TIMEOUT
+    try:
+        element_present = EC.presence_of_element_located((By.ID, 'element_id'))
+        WebDriverWait(driver, timeout).until(element_present)
+    except TimeoutException:
+        print("Timed out waiting for page to load")
+
+    # extract category urls from soup
+    cat_elements = soup.find_all(DARAZ_CATEGORY_ROOT_MENU_TAG, {"class": DARAZ_CATEGORY_ROOT_MENU_CLASSNAME})
+    
+    category_tree = []
     
     for cat_element in cat_elements:
         
+        l1_category_elements = driver.find_element_by_id(cat_element['id'])
+        l1_category = l1_category_elements.text
         
-        hover_element = driver.find_element_by_id(cat_element['id'])
-        parent_cat_name = hover_element.text
-        hover = ActionChains(driver).move_to_element(hover_element)
-        hover.perform()
-        # get html and find the url
-        cat_element_soup = BeautifulSoup(driver.page_source, 'html.parser')
+        l2_classname = DARAZ_CATEGORY_SUB_MENU_CLASSNAME + " " + cat_element['id']
+        l2_category_element = soup.find('ul', {'class':l2_classname})
+        l2_category_elements = l2_category_element.find_all(DARAZ_CATEGORY_SUB_MENU_ITEM_TAG, {'class':DARAZ_CATEGORY_SUB_MENU_ITEM} )
         
-        hover_soup = cat_element_soup.find_all("li", {"class":"lzd-site-menu-sub-item"})
-        time.sleep(1)
-        cat_url_list = []
-        
-        for hover_tag in hover_soup:
-            # find all as
-            #parent_cat_name = hover_tag.find("li", {"class": "lzd-site-menu-sub-item"})
-            a_tags = hover_tag.find_all("a")
-            for a in a_tags:
-                url = "https:" + a['href']
-                child_cat_name = a.text
-                cat_url_list.append({'parent_category':parent_cat_name, 'child_category':child_cat_name, 'url':url})
+
+        for l2_category_element in l2_category_elements:
+
+            l2_category = l2_category_element.span.text
+            l2_url = "https:" + l2_category_element.a['href']
+
+            l3_category_elements = l2_category_element.find(DARAZ_CATEGORY_L2_TABLE_TAG, {'class': DARAZ_CATEGORY_L2_TABLE})
+            l3_category_elements = l3_category_elements.find_all(DARAZ_CATEGORY_L2_ITEM_TAG, {'class': DARAZ_CATEGORY_L2_ITEM})
             
-        
-    return cat_url_list
+            for l3_category_element in l3_category_elements:
+                l3_category = l3_category_element.span.text
+                a_tag = l3_category_element.find('a')
+                l3_url = "https:" + a_tag['href']
+
+                category_tree.append({'l1_Cat': l1_category, 'l2_cat': l2_category, 'l3_cat':l3_category, 'l2_url':l2_url, 'l3_url': l3_url})
+
+    driver.close()
+    return category_tree
+            
 
 
-def get_url_list():
 
+def get_url_list(proxies):
     baseurl = 'https://daraz.com.np/'
-
-    url_list = daraz_category_urls(baseurl, user_agent_list[0])
-
+    url_list = daraz_category_urls(proxies, baseurl)
     return url_list
 
 
-
-# json_urls = json.dumps(url_list)
-
-# text_file = open("daraz_cat_urls.txt", "w")
-# text_file.write(json_urls)
-# text_file.close()
+if __name__ == '__main__':
+    proxies = get_proxies()
+    # proxies = []
+    baseurl = 'https://daraz.com.np/'
+    url_list = daraz_category_urls(proxies, baseurl)
+    cat_tree_df = pd.DataFrame(url_list)
+    cat_tree_df.to_csv('daraz_category_tree.csv')
