@@ -1,3 +1,5 @@
 dev_files/
 env/
 .env
+.idea/
+*.csv
